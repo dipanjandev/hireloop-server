@@ -41,17 +41,51 @@ app.get("/users", async (req, res) => {
   res.send(result);
 });
 
-// Get API
+// Job Related API
 app.get("/jobs", async (req, res) => {
-  const cursor = jobs.find();
+  const query = {};
+  console.log(req.query);
+  if (req.query) {
+    if (req.query.category) {
+      query.category = req.query.category;
+    }
+    if (req.query.jobType) {
+      // mongodb তে বড় হাতের থাকার কারণে এখানে  নিচের মত কেস-ইনসেনসিটিভ রেজেক্স দেওয়া হল।
+      query.jobType = { $regex: new RegExp(`^${req.query.jobType}$`, "i") };
+    }
+
+    // case sensative check.
+    if (req.query.search && req.query.search.trim() !== "") {
+      // Escape special regex characters to prevent regex injection/errors
+      const escapedSearch = req.query.search
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      query.$or = [
+        { title: { $regex: escapedSearch, $options: "i" } },
+        { responsibilities: { $regex: escapedSearch, $options: "i" } },
+        { qualifications: { $regex: escapedSearch, $options: "i" } },
+      ];
+    }
+  }
+
+  const cursor = jobs.find(query);
   const result = await cursor.toArray();
   res.send(result);
 });
 
-// Jobs Related API
+// Job Post API
 app.post("/jobs", async (req, res) => {
   const job = req.body;
   const result = await jobs.insertOne(job);
+  res.send(result);
+});
+
+// Get single Job API
+app.get("/jobs/:id", async (req, res) => {
+  const id = req.params.id;
+  const query = { _id: new ObjectId(id) };
+  const result = await jobs.findOne(query);
   res.send(result);
 });
 

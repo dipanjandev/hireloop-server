@@ -30,6 +30,7 @@ const connectedClient = await connectToMongoDB();
 const database = connectedClient.db("hireloop-db");
 const users = database.collection("user");
 const jobs = database.collection("allJobs");
+const applications = database.collection("applications");
 
 app.get("/", (req, res) => {
   res.send({ message: "Hireloop is Looping!" });
@@ -86,6 +87,25 @@ app.get("/jobs/:id", async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
   const result = await jobs.findOne(query);
+  res.send(result);
+});
+
+// Job Application API
+app.post("/applications", async (req, res) => {
+  const application = req.body;
+  const result = await applications.insertOne(application);
+  res.send(result);
+});
+
+app.get("/applications", async (req, res) => {
+  const query = {};
+
+  if (req.query.applicantId) {
+    query.userId = req.query.applicantId;
+  }
+
+  const cursor = applications.find(query);
+  const result = await cursor.toArray();
   res.send(result);
 });
 

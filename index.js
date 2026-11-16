@@ -2,7 +2,9 @@ import express, { application } from "express";
 import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
+import Stripe from "stripe";
 
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -31,14 +33,23 @@ const database = connectedClient.db("hireloop-db");
 const users = database.collection("user");
 const jobs = database.collection("allJobs");
 const applications = database.collection("applications");
+const payments = database.collection("payments");
 
 app.get("/", (req, res) => {
   res.send({ message: "Hireloop is Looping!" });
 });
 
+// Users Related API's
 app.get("/users", async (req, res) => {
   const cursor = users.find({});
   const result = await cursor.toArray();
+  res.send(result);
+});
+
+app.get("/users/:id/premium", async (req, res) => {
+  const id = req.params.id;
+  const query = { _id: new ObjectId(id) };
+  const result = await users.findOne(query, { projection: { premium: 1 } });
   res.send(result);
 });
 
@@ -53,6 +64,9 @@ app.get("/jobs", async (req, res) => {
     if (req.query.jobType) {
       // mongodb তে বড় হাতের থাকার কারণে এখানে  নিচের মত কেস-ইনসেনসিটিভ রেজেক্স দেওয়া হল।
       query.jobType = { $regex: new RegExp(`^${req.query.jobType}$`, "i") };
+    }
+    if (req.query.recruiterId) {
+      query.recruiterId = req.query.recruiterId;
     }
 
     // case sensative check.
@@ -97,10 +111,26 @@ app.post("/applications", async (req, res) => {
   res.send(result);
 });
 
+// Applications Updated
+app.patch("/applications/:id", async (req, res) => {
+  const { id } = req.params;
+  const query = { _id: new ObjectId(id) };
+  const updatedDoc = {
+    $set: {
+      status: req.body.status,
+    },
+  };
+  const result = await applications.updateOne(query, updatedDoc);
+  res.send(result);
+});
+
 app.get("/applications", async (req, res) => {
   const query = {};
   if (req.query.applicantId) {
     query.userId = req.query.applicantId;
+  }
+  if (req.query.jobId) {
+    query.jobId = req.query.jobId;
   }
   const cursor = applications.find(query);
   const result = await cursor.toArray();
@@ -112,6 +142,9 @@ app.get("/applications/count", async (req, res) => {
   if (req.query.applicantId) {
     query.userId = req.query.applicantId;
   }
+  if (req.query.jobId) {
+    query.jobId = req.query.jobId;
+  }
   const result = await applications.countDocuments(query);
   res.send({ count: result });
 });
@@ -122,6 +155,62 @@ app.delete("/jobs/:id", async (req, res) => {
   const query = { _id: new ObjectId(id) };
   const result = await jobs.deleteOne(query);
   res.send(result);
+});
+
+// Payment relatde API's
+app.post("/payments/checkout-verify", async (req, res) => {
+  const { sessionId } = req.body;
+
+  if (!sessionId) {
+    return res.send({ success: false, message: "session Id is required." });
+  }
+
+  const { status, customer_email, metadata, payment_intent, payment_status } =
+    await stripe.checkout.sessions.retrieve(sessionId);
+
+  // 1. এটা কি নতুন কোন সেশন কি না তা চেক করবে।
+  // 2. চেক করবে যে সেশন আইডিটাকি বর্তমান ইউজারের কি না।
+  // 3. সেশনআইডিটি পেমেন্ট কালেকশননে ডুকানো হবে।
+  // 4. প্রিমিয়াম িইউজার হিসেবে আপডেট করা হবে।
+
+  if (status === "complete" && payment_status === "paid") {
+    const sessionQuery = { sessionId };
+    const existingPayment = await payments.findOne(sessionQuery);
+    if (existingPayment) {
+      return res.send({ success: false, message: "Payment already Verified" });
+    }
+
+    const payment = {
+      sessionId,
+      status,
+      payment_status,
+      customer_email,
+      userId: metadata.userId,
+      payment_date: new Date(),
+      payment_intent,
+    };
+    const result = await payments.insertOne(payment);
+
+    // Update The user Table
+    const query = { _id: new ObjectId(metadata.userId) };
+
+    // const updatedDoc = {
+    //   $set: {
+    //     premium: true,
+    //   },
+    // };
+    const updateResult = await users.updateOne(
+      { _id: new ObjectId(metadata.userId) },
+      {
+        $set: {
+          premium: true,
+        },
+      },
+    );
+    res.send({ success: true, result, updateResult });
+  }
+  res.send({ success: false, message: "Payment Verification failed!" });
+  return;
 });
 
 app.listen(port, () => {

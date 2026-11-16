@@ -46,10 +46,23 @@ app.get("/users", async (req, res) => {
   res.send(result);
 });
 
+// Find Premium User by Id
 app.get("/users/:id/premium", async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
   const result = await users.findOne(query, { projection: { premium: 1 } });
+  res.send(result);
+});
+
+app.patch("/users/:id/role", async (req, res) => {
+  const id = req.params.id;
+  const query = { _id: new ObjectId(id) };
+  const updatedDoc = {
+    $set: {
+      role: req.body.role,
+    },
+  };
+  const result = await users.updateOne(query, updatedDoc);
   res.send(result);
 });
 
@@ -167,11 +180,6 @@ app.post("/payments/checkout-verify", async (req, res) => {
 
   const { status, customer_email, metadata, payment_intent, payment_status } =
     await stripe.checkout.sessions.retrieve(sessionId);
-
-  // 1. এটা কি নতুন কোন সেশন কি না তা চেক করবে।
-  // 2. চেক করবে যে সেশন আইডিটাকি বর্তমান ইউজারের কি না।
-  // 3. সেশনআইডিটি পেমেন্ট কালেকশননে ডুকানো হবে।
-  // 4. প্রিমিয়াম িইউজার হিসেবে আপডেট করা হবে।
 
   if (status === "complete" && payment_status === "paid") {
     const sessionQuery = { sessionId };

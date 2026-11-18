@@ -31,9 +31,75 @@ export async function connectToMongoDB() {
 const connectedClient = await connectToMongoDB();
 const database = connectedClient.db("hireloop-db");
 const users = database.collection("user");
+const sessions = database.collection("session");
 const jobs = database.collection("allJobs");
 const applications = database.collection("applications");
 const payments = database.collection("payments");
+
+// const myLogger = (req, res, next) => {
+//   console.log("Now Hitting API", req.url);
+//   next();
+// };
+
+// সবার জন্য এই লজিকটা শুধু একবার বানাতে হবে।
+const verifyToken = async (req, res, next) => {
+  // console.log("Headers on the server", req.headers);
+  const authHeader = req.headers.authorization;
+  // console.log(authHeader);
+  if (!authHeader) {
+    res.status(401).send({ message: "Unauthorized" });
+    return;
+  }
+  const token = authHeader.split(" ")[1];
+  // console.log(token);
+  if (!token) {
+    res.status(401).send({ message: "Unauthorized" });
+    return;
+  }
+  const query = { token };
+  const session = await sessions.findOne(query);
+  if (!session) {
+    res.status(401).send({ message: "Unauthorized" });
+    return;
+  }
+
+  const userId = session.userId;
+  const userQuery = { _id: new ObjectId(userId) };
+  const user = await users.findOne(userQuery);
+  if (!user) {
+    res.status(401).send({ message: "Unauthorized" });
+    return;
+  }
+
+  req.user = user;
+
+  next();
+};
+
+// Must Call This medileware after VerifyToken
+const verifySeeker = async (req, res, next) => {
+  if (req.user.role !== "seeker") {
+    res.status(403).send({ message: "Forbiden" });
+    return;
+  }
+  next();
+};
+
+const verifyRecruiter = async (req, res, next) => {
+  if (req.user.role !== "recruiter") {
+    res.status(403).send({ message: "Forbiden" });
+    return;
+  }
+  next();
+};
+
+const verifyAdmin = async (req, res, next) => {
+  if (req.user.role !== "admin") {
+    res.status(403).send({ message: "Forbiden" });
+    return;
+  }
+  next();
+};
 
 app.get("/", (req, res) => {
   res.send({ message: "Hireloop is Looping!" });
@@ -54,7 +120,7 @@ app.get("/users/:id/premium", async (req, res) => {
   res.send(result);
 });
 
-app.patch("/users/:id/role", async (req, res) => {
+app.patch("/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
   const id = req.params.id;
   const query = { _id: new ObjectId(id) };
   const updatedDoc = {
@@ -103,7 +169,7 @@ app.get("/jobs", async (req, res) => {
 });
 
 // Job Post API
-app.post("/jobs", async (req, res) => {
+app.post("/jobs", verifyToken, verifyRecruiter, async (req, res) => {
   const job = req.body;
   const result = await jobs.insertOne(job);
   res.send(result);
@@ -118,7 +184,7 @@ app.get("/jobs/:id", async (req, res) => {
 });
 
 // Job Application API
-app.post("/applications", async (req, res) => {
+app.post("/applications", verifyToken, verifySeeker, async (req, res) => {
   const application = req.body;
   const result = await applications.insertOne(application);
   res.send(result);
@@ -137,12 +203,24 @@ app.patch("/applications/:id", async (req, res) => {
   res.send(result);
 });
 
-app.get("/applications", async (req, res) => {
+app.get("/applications", verifyToken, async (req, res) => {
+  // console.log("Headers On the Server", req.headers);
   const query = {};
   if (req.query.applicantId) {
     query.userId = req.query.applicantId;
   }
   if (req.query.jobId) {
+    const jobQuery = { _id: new ObjectId(req.query.jobId) };
+    const job = await jobs.findOne(jobQuery);
+
+    if (
+      job.recruiterId !== req.user._id.toString() &&
+      req.user.role !== "admin"
+    ) {
+      res.status(401).send({ message: "Forbiden" });
+      return;
+    }
+
     query.jobId = req.query.jobId;
   }
   const cursor = applications.find(query);
